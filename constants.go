@@ -59,3 +59,96 @@ var kValidFlags = [...]Flags{
 	// CONTINUATION
 	END_HEADERS | PAD_LOW | PAD_HIGH,
 }
+
+type ErrorCode uint32
+
+const (
+	NO_ERROR            ErrorCode = 0x00
+	PROTOCOL_ERROR      ErrorCode = 0x01
+	INTERNAL_ERROR      ErrorCode = 0x02
+	FLOW_CONTROL_ERROR  ErrorCode = 0x03
+	SETTINGS_TIMEOUT    ErrorCode = 0x04
+	STREAM_CLOSED       ErrorCode = 0x05
+	FRAME_SIZE_ERROR    ErrorCode = 0x06
+	REFUSED_STREAM      ErrorCode = 0x07
+	CANCEL              ErrorCode = 0x08
+	COMPRESSION_ERROR   ErrorCode = 0x09
+	CONNECT_ERROR       ErrorCode = 0x10
+	ENHANCE_YOUR_CALM   ErrorCode = 0x11
+	INADEQUATE_SECURITY ErrorCode = 0x12
+)
+
+// Wrapper around error, satisfying the error interface
+// but additionally capturing an ErrorCode.
+type Error struct {
+	Code ErrorCode
+	Err  error
+}
+
+func (e *Error) Error() string {
+	return e.Err.Error()
+}
+
+// Constructors which wrap |err| within a coded Error instance.
+func ProtocolError(err error) *Error {
+	return &Error{PROTOCOL_ERROR, err}
+}
+func InternalError(err error) *Error {
+	return &Error{INTERNAL_ERROR, err}
+}
+func FlowControlError(err error) *Error {
+	return &Error{FLOW_CONTROL_ERROR, err}
+}
+func SettingsTimeoutError(err error) *Error {
+	return &Error{SETTINGS_TIMEOUT, err}
+}
+func StreamClosedError(err error) *Error {
+	return &Error{STREAM_CLOSED, err}
+}
+func FrameSizeError(err error) *Error {
+	return &Error{FRAME_SIZE_ERROR, err}
+}
+func RefusedStreamError(err error) *Error {
+	return &Error{REFUSED_STREAM, err}
+}
+func CancelError(err error) *Error {
+	return &Error{CANCEL, err}
+}
+func CompressionError(err error) *Error {
+	return &Error{COMPRESSION_ERROR, err}
+}
+func ConnectError(err error) *Error {
+	return &Error{CONNECT_ERROR, err}
+}
+func EnhanceYourCalmError(err error) *Error {
+	return &Error{ENHANCE_YOUR_CALM, err}
+}
+func InadequateSecurityError(err error) *Error {
+	return &Error{INADEQUATE_SECURITY, err}
+}
+
+type SettingId uint8
+
+const (
+	SETTINGS_HEADER_TABLE_SIZE      SettingId = 0x01
+	SETTINGS_ENABLE_PUSH            SettingId = 0x02
+	SETTINGS_MAX_CONCURRENT_STREAMS SettingId = 0x03
+	SETTINGS_INITIAL_WINDOW_SIZE    SettingId = 0x04
+
+	// For range-tests of SettingID validity.
+	SETTINGS_MIN_SETTING_ID SettingId = SETTINGS_HEADER_TABLE_SIZE
+	SETTINGS_MAX_SETTING_ID SettingId = SETTINGS_INITIAL_WINDOW_SIZE
+)
+
+var kSettingDefaults = [...]uint32{
+	// (Not a setting)
+	0,
+	// SETTINGS_HEADER_TABLE_SIZE
+	0x00001000, // 4096.
+	// SETTINGS_ENABLE_PUSH
+	1,
+	// SETTINGS_MAX_CONCURRENT_STREAMS
+	0xffffffff,
+	// SETTINGS_INITIAL_WINDOW_SIZE
+	0x0000ffff, // 65,535
+}

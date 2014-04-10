@@ -13,7 +13,7 @@ type Frame interface {
 	GetFlags() Flags
 	GetId() StreamId
 
-	Parse(in *io.LimitedReader) error
+	Parse(in *io.LimitedReader) *Error
 }
 
 // Models the Flags and StreamID fields common to all frame types.
@@ -67,13 +67,13 @@ type PriorityFrame struct {
 type RstStreamFrame struct {
 	FramePrefix
 
-	ErrorCode uint32
+	Code ErrorCode
 }
 
 type SettingsFrame struct {
 	FramePrefix
 
-	Settings map[uint8]uint32
+	Settings map[SettingId]uint32
 }
 
 type PushPromiseFrame struct {
@@ -93,9 +93,9 @@ type PingFrame struct {
 type GoAwayFrame struct {
 	FramePrefix
 
-	LastId    StreamId
-	ErrorCode uint32
-	Debug     []byte
+	LastId StreamId
+	Code   ErrorCode
+	Debug  []byte
 }
 
 type WindowUpdateFrame struct {
@@ -146,32 +146,32 @@ func NewFrame(frameType FrameType) Frame {
 }
 
 func (f *DataFrame) GetType() FrameType {
-  return DATA
+	return DATA
 }
 func (f *HeadersFrame) GetType() FrameType {
-  return HEADERS
+	return HEADERS
 }
 func (f *PriorityFrame) GetType() FrameType {
-  return PRIORITY
+	return PRIORITY
 }
 func (f *RstStreamFrame) GetType() FrameType {
-  return RST_STREAM
+	return RST_STREAM
 }
 func (f *SettingsFrame) GetType() FrameType {
-  return SETTINGS
+	return SETTINGS
 }
 func (f *PushPromiseFrame) GetType() FrameType {
-  return PUSH_PROMISE
+	return PUSH_PROMISE
 }
 func (f *PingFrame) GetType() FrameType {
-  return PING
+	return PING
 }
 func (f *GoAwayFrame) GetType() FrameType {
-  return GOAWAY
+	return GOAWAY
 }
 func (f *WindowUpdateFrame) GetType() FrameType {
-  return WINDOW_UPDATE
+	return WINDOW_UPDATE
 }
 func (f *ContinuationFrame) GetType() FrameType {
-  return CONTINUATION
+	return CONTINUATION
 }
