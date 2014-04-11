@@ -333,6 +333,19 @@ func (t *ParserTest) TestValidHeadersFrame(c *C) {
 	c.Check(headers.Fragment, DeepEquals, []byte{0xf1, 0xf2, 0xf3, 0xf4, 0xf5})
 }
 
+func (t *ParserTest) TestInvalidHeadersUnderflow(c *C) {
+	input := bytes.NewBuffer([]byte{
+		0x00, 0x01, byte(HEADERS), byte(PAD_LOW | PAD_HIGH),
+		0x01, 0x02, 0x03, 0x04,
+		0x00, 0x00,
+	})
+	frame, err := ParseFrame(input)
+	c.Check(err, ErrorMatches,
+		"Reached frame end while reading fixed-size payload")
+	c.Check(err.Code, Equals, FRAME_SIZE_ERROR)
+	c.Check(frame, IsNil)
+}
+
 func (t *ParserTest) TestInvalidPriorityFrameWithoutFlags(c *C) {
 	input := bytes.NewBuffer([]byte{
 		0x00, 0x00, byte(PRIORITY), byte(NO_FLAGS),
@@ -541,6 +554,175 @@ func (t *ParserTest) TestInvalidPushPromiseFrameWithZeroPromisedId(c *C) {
 	frame, err := ParseFrame(input)
 	c.Check(err, ErrorMatches, "Promised stream ID must be nonzero")
 	c.Check(err.Code, Equals, PROTOCOL_ERROR)
+	c.Check(frame, IsNil)
+}
+
+func (t *ParserTest) TestValidPingFrame(c *C) {
+	input := bytes.NewBuffer([]byte{
+		0x00, 0x08, byte(PING), byte(ACK),
+		0x01, 0x02, 0x03, 0x04,
+		0x55, 0x66, 0x77, 0x88,
+		0x99, 0xaa, 0xbb, 0xcc,
+	})
+	frame, err := ParseFrame(input)
+	c.Check(err, IsNil)
+	ping := frame.(*PingFrame)
+
+	c.Check(ping.Flags, Equals, ACK)
+	c.Check(ping.Id, Equals, StreamId(0x01020304))
+	c.Check(ping.OpaqueData, Equals, uint64(0x5566778899aabbcc))
+}
+
+func (t *ParserTest) TestInvalidPingFrameUnderflow(c *C) {
+	input := bytes.NewBuffer([]byte{
+		0x00, 0x07, byte(PING), byte(ACK),
+		0x01, 0x02, 0x03, 0x04,
+		0x55, 0x66, 0x77, 0x88,
+		0x99, 0xaa, 0xbb, 0xcc,
+	})
+	frame, err := ParseFrame(input)
+	c.Check(err, ErrorMatches,
+		"Reached frame end while reading fixed-size payload")
+	c.Check(err.Code, Equals, FRAME_SIZE_ERROR)
+	c.Check(frame, IsNil)
+}
+
+func (t *ParserTest) TestValidGoAwayFrame(c *C) {
+	input := bytes.NewBuffer([]byte{
+		0x00, 0x0b, byte(GOAWAY), byte(NO_FLAGS),
+		0x00, 0x00, 0x00, 0x00,
+		0x10, 0x20, 0x30, 0x40,
+		0x00, 0x00, 0x00, 0x11,
+		0xd1, 0xd2, 0xd3,
+	})
+	frame, err := ParseFrame(input)
+	c.Check(err, IsNil)
+	goAway := frame.(*GoAwayFrame)
+
+	c.Check(goAway.Flags, Equals, NO_FLAGS)
+	c.Check(goAway.Id, Equals, StreamId(0x0))
+	c.Check(goAway.LastStream, Equals, StreamId(0x10203040))
+	c.Check(goAway.Code, Equals, ENHANCE_YOUR_CALM)
+	c.Check(goAway.Debug, DeepEquals, []byte{0xd1, 0xd2, 0xd3})
+}
+
+func (t *ParserTest) TestInvalidGoAwayStreamId(c *C) {
+	input := bytes.NewBuffer([]byte{
+		0x00, 0x0b, byte(GOAWAY), byte(NO_FLAGS),
+		0x00, 0x00, 0x00, 0x01,
+	})
+	frame, err := ParseFrame(input)
+	c.Check(err, ErrorMatches, "Invalid GOAWAY StreamId 0x1")
+	c.Check(err.Code, Equals, PROTOCOL_ERROR)
+	c.Check(frame, IsNil)
+}
+
+func (t *ParserTest) TestInvalidGoAwayLastStreamId(c *C) {
+	input := bytes.NewBuffer([]byte{
+		0x00, 0x0b, byte(GOAWAY), byte(NO_FLAGS),
+		0x00, 0x00, 0x00, 0x00,
+		0xff, 0x20, 0x30, 0x40,
+	})
+	frame, err := ParseFrame(input)
+	c.Check(err, ErrorMatches, "Reserved stream ID bit is non-zero")
+	c.Check(err.Code, Equals, PROTOCOL_ERROR)
+	c.Check(frame, IsNil)
+}
+
+func (t *ParserTest) TestInvalidGoAwayFixedPayloadUnderflow(c *C) {
+	input := bytes.NewBuffer([]byte{
+		0x00, 0x07, byte(GOAWAY), byte(NO_FLAGS),
+		0x00, 0x00, 0x00, 0x00,
+		0x10, 0x20, 0x30, 0x40,
+		0x00, 0x00, 0x00, 0x11,
+	})
+	frame, err := ParseFrame(input)
+	c.Check(err, ErrorMatches,
+		"Reached frame end while reading fixed-size payload")
+	c.Check(err.Code, Equals, FRAME_SIZE_ERROR)
+	c.Check(frame, IsNil)
+}
+
+func (t *ParserTest) TestInvalidGoAwayDynamicPayloadUnderflow(c *C) {
+	input := bytes.NewBuffer([]byte{
+		0x00, 0x08, byte(GOAWAY), byte(NO_FLAGS),
+		0x00, 0x00, 0x00, 0x00,
+		0x10, 0x20, 0x30, 0x40,
+		0x00, 0x00, 0x00,
+	})
+	frame, err := ParseFrame(input)
+	c.Check(err, ErrorMatches, "unexpected EOF")
+	c.Check(err.Code, Equals, INTERNAL_ERROR)
+	c.Check(frame, IsNil)
+}
+
+func (t *ParserTest) TestValidWindowUpdate(c *C) {
+	input := bytes.NewBuffer([]byte{
+		0x00, 0x04, byte(WINDOW_UPDATE), byte(NO_FLAGS),
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x10, 0x00,
+	})
+	frame, err := ParseFrame(input)
+	c.Check(err, IsNil)
+	windowUpdate := frame.(*WindowUpdateFrame)
+
+	c.Check(windowUpdate.Flags, Equals, NO_FLAGS)
+	c.Check(windowUpdate.Id, Equals, StreamId(0x0))
+	c.Check(windowUpdate.SizeDelta, Equals, uint32(4096))
+}
+
+func (t *ParserTest) TestInvalidWindowUpdateWithBadSizeDelta(c *C) {
+	input := bytes.NewBuffer([]byte{
+		0x00, 0x04, byte(WINDOW_UPDATE), byte(NO_FLAGS),
+		0x00, 0x00, 0x00, 0x00,
+		0xff, 0x00, 0x10, 0x00,
+	})
+	frame, err := ParseFrame(input)
+	c.Check(err, ErrorMatches, "Reserved bit is non-zero")
+	c.Check(err.Code, Equals, PROTOCOL_ERROR)
+	c.Check(frame, IsNil)
+}
+
+func (t *ParserTest) TestInvalidWindowUpdateUnderflow(c *C) {
+	input := bytes.NewBuffer([]byte{
+		0x00, 0x03, byte(WINDOW_UPDATE), byte(NO_FLAGS),
+		0x00, 0x00, 0x00, 0x00,
+		0xff, 0x00, 0x10, 0x00,
+	})
+	frame, err := ParseFrame(input)
+	c.Check(err, ErrorMatches,
+		"Reached frame end while reading fixed-size payload")
+	c.Check(err.Code, Equals, FRAME_SIZE_ERROR)
+	c.Check(frame, IsNil)
+}
+
+func (t *ParserTest) TestValidContinuationFrame(c *C) {
+	input := bytes.NewBuffer([]byte{
+		0x00, 0x08, byte(CONTINUATION), byte(PAD_LOW | END_HEADERS),
+		0x01, 0x02, 0x03, 0x04,
+		0x02, 0xf1, 0xf2, 0xf3,
+		0xf4, 0xf5, 0xa1, 0xa2,
+	})
+	frame, err := ParseFrame(input)
+	c.Check(err, IsNil)
+	continuation := frame.(*ContinuationFrame)
+
+	c.Check(continuation.Flags, Equals, PAD_LOW|END_HEADERS)
+	c.Check(continuation.Id, Equals, StreamId(0x01020304))
+	c.Check(continuation.Fragment, DeepEquals,
+		[]byte{0xf1, 0xf2, 0xf3, 0xf4, 0xf5})
+}
+
+func (t *ParserTest) TestInvalidContinuationUnderflow(c *C) {
+	input := bytes.NewBuffer([]byte{
+		0x00, 0x00, byte(CONTINUATION), byte(PAD_LOW),
+		0x01, 0x02, 0x03, 0x04,
+		0x00,
+	})
+	frame, err := ParseFrame(input)
+	c.Check(err, ErrorMatches,
+		"Reached frame end while reading fixed-size payload")
+	c.Check(err.Code, Equals, FRAME_SIZE_ERROR)
 	c.Check(frame, IsNil)
 }
 

@@ -260,14 +260,17 @@ func (f *GoAwayFrame) Parse(in *io.LimitedReader) *Error {
 	if err := f.FramePrefix.Parse(in, f.GetType()); err != nil {
 		return err
 	}
-	if err := read(in, &f.LastId); err != nil {
+	if f.Id != 0 {
+		return ProtocolError(fmt.Errorf("Invalid GOAWAY StreamId %#x", f.Id))
+	}
+	if err := read(in, &f.LastStream); err != nil {
 		return err
+	}
+	if f.LastStream&kStreamIdReservedMask != 0 {
+		return ProtocolError(fmt.Errorf("Reserved stream ID bit is non-zero"))
 	}
 	if err := read(in, &f.Code); err != nil {
 		return err
-	}
-	if f.LastId&kStreamIdReservedMask != 0 {
-		return ProtocolError(fmt.Errorf("Reserved stream ID bit is non-zero"))
 	}
 	f.Debug = make([]byte, in.N)
 	if _, err := io.ReadFull(in, f.Debug); err != nil {

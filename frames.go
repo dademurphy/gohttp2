@@ -93,9 +93,9 @@ type PingFrame struct {
 type GoAwayFrame struct {
 	FramePrefix
 
-	LastId StreamId
-	Code   ErrorCode
-	Debug  []byte
+	LastStream StreamId
+	Code       ErrorCode
+	Debug      []byte
 }
 
 type WindowUpdateFrame struct {
