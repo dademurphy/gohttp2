@@ -1,10 +1,13 @@
 // Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-
 package http2
 
-type StreamId uint32
+import (
+	"fmt"
+)
+
+type StreamID uint32
 
 type FrameType uint8
 
@@ -85,59 +88,54 @@ type Error struct {
 	Err  error
 }
 
+func NewError(code ErrorCode, errArgs ...interface{}) *Error {
+	if len(errArgs) == 0 {
+		return &Error{Code: code}
+	}
+
+	var err error
+	switch t := errArgs[0].(type) {
+	case error:
+		err = t
+	case string:
+		err = fmt.Errorf(t, errArgs[1:]...)
+	default:
+		err = fmt.Errorf("%#v", errArgs)
+	}
+	return &Error{
+		Code: code,
+		Err:  err,
+	}
+}
+
 func (e *Error) Error() string {
 	return e.Err.Error()
 }
 
-// Constructors which wrap |err| within a coded Error instance.
-func ProtocolError(err error) *Error {
-	return &Error{PROTOCOL_ERROR, err}
+func protocolError(errArgs ...interface{}) *Error {
+	return NewError(PROTOCOL_ERROR, errArgs...)
 }
-func InternalError(err error) *Error {
-	return &Error{INTERNAL_ERROR, err}
+func internalError(errArgs ...interface{}) *Error {
+	return NewError(INTERNAL_ERROR, errArgs...)
 }
-func FlowControlError(err error) *Error {
-	return &Error{FLOW_CONTROL_ERROR, err}
+func flowControlError(errArgs ...interface{}) *Error {
+	return NewError(FLOW_CONTROL_ERROR, errArgs...)
 }
-func SettingsTimeoutError(err error) *Error {
-	return &Error{SETTINGS_TIMEOUT, err}
-}
-func StreamClosedError(err error) *Error {
-	return &Error{STREAM_CLOSED, err}
-}
-func FrameSizeError(err error) *Error {
-	return &Error{FRAME_SIZE_ERROR, err}
-}
-func RefusedStreamError(err error) *Error {
-	return &Error{REFUSED_STREAM, err}
-}
-func CancelError(err error) *Error {
-	return &Error{CANCEL, err}
-}
-func CompressionError(err error) *Error {
-	return &Error{COMPRESSION_ERROR, err}
-}
-func ConnectError(err error) *Error {
-	return &Error{CONNECT_ERROR, err}
-}
-func EnhanceYourCalmError(err error) *Error {
-	return &Error{ENHANCE_YOUR_CALM, err}
-}
-func InadequateSecurityError(err error) *Error {
-	return &Error{INADEQUATE_SECURITY, err}
+func frameSizeError(errArgs ...interface{}) *Error {
+	return NewError(FRAME_SIZE_ERROR, errArgs...)
 }
 
-type SettingId uint8
+type SettingID uint8
 
 const (
-	SETTINGS_HEADER_TABLE_SIZE      SettingId = 0x01
-	SETTINGS_ENABLE_PUSH            SettingId = 0x02
-	SETTINGS_MAX_CONCURRENT_STREAMS SettingId = 0x03
-	SETTINGS_INITIAL_WINDOW_SIZE    SettingId = 0x04
+	SETTINGS_HEADER_TABLE_SIZE      SettingID = 0x01
+	SETTINGS_ENABLE_PUSH            SettingID = 0x02
+	SETTINGS_MAX_CONCURRENT_STREAMS SettingID = 0x03
+	SETTINGS_INITIAL_WINDOW_SIZE    SettingID = 0x04
 
 	// For range-tests of SettingID validity.
-	SETTINGS_MIN_SETTING_ID SettingId = SETTINGS_HEADER_TABLE_SIZE
-	SETTINGS_MAX_SETTING_ID SettingId = SETTINGS_INITIAL_WINDOW_SIZE
+	SETTINGS_MIN_SETTING_ID SettingID = SETTINGS_HEADER_TABLE_SIZE
+	SETTINGS_MAX_SETTING_ID SettingID = SETTINGS_INITIAL_WINDOW_SIZE
 )
 
 var kSettingDefaults = [...]uint32{

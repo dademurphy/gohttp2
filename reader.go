@@ -18,10 +18,6 @@ type Reader struct {
   bits BitSequence
 }
 
-func NewReader(reader io.Reader) *Reader {
-  return &Reader{reader: reader}
-}
-
 func (r *Reader) Read(p []byte) (int, error) {
   if r.bits.Length % 8 != 0 {
     panic("Unread byte remainder")

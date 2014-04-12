@@ -1,32 +1,34 @@
 // Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-
 package http2
 
-import (
-	"io"
-)
+type HeaderField struct {
+	// Header name. Must be lower-case.
+	Name string
+	// Header value, or values if delimited by '\0'.
+	Values string
+	// Whether value may participate in delta encoding.
+	NeverDeltaEncode bool
+}
 
 type Frame interface {
 	GetType() FrameType
 	GetFlags() Flags
-	GetId() StreamId
-
-	Parse(in *io.LimitedReader) *Error
+	GetStreamID() StreamID
 }
 
 // Models the Flags and StreamID fields common to all frame types.
 type FramePrefix struct {
-	Flags Flags
-	Id    StreamId
+	Flags    Flags
+	StreamID StreamID
 }
 
 func (f *FramePrefix) GetFlags() Flags {
 	return f.Flags
 }
-func (f *FramePrefix) GetId() StreamId {
-	return f.Id
+func (f *FramePrefix) GetStreamID() StreamID {
+	return f.StreamID
 }
 
 // Models frames carrying padding (DATA, HEADERS, PUSH_PROMISE,
@@ -41,7 +43,7 @@ type FramePriority struct {
 	PriorityWeight uint8
 
 	ExclusiveDependency bool
-	StreamDependency    StreamId
+	StreamDependency    StreamID
 }
 
 type DataFrame struct {
@@ -56,7 +58,7 @@ type HeadersFrame struct {
 	FramePadding
 	FramePriority
 
-	Fragment []byte
+	Fields []HeaderField
 }
 
 type PriorityFrame struct {
@@ -73,15 +75,15 @@ type RstStreamFrame struct {
 type SettingsFrame struct {
 	FramePrefix
 
-	Settings map[SettingId]uint32
+	Settings map[SettingID]uint32
 }
 
 type PushPromiseFrame struct {
 	FramePrefix
 	FramePadding
 
-	PromisedId StreamId
-	Fragment   []byte
+	PromisedID StreamID
+	Fields     []HeaderField
 }
 
 type PingFrame struct {
@@ -93,9 +95,9 @@ type PingFrame struct {
 type GoAwayFrame struct {
 	FramePrefix
 
-	LastStream StreamId
-	Code       ErrorCode
-	Debug      []byte
+	LastID StreamID
+	Code   ErrorCode
+	Debug  []byte
 }
 
 type WindowUpdateFrame struct {
@@ -108,7 +110,7 @@ type ContinuationFrame struct {
 	FramePrefix
 	FramePadding
 
-	Fragment []byte
+	Fields []HeaderField
 }
 
 func NewFrame(frameType FrameType) Frame {
