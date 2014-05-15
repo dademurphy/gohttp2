@@ -121,7 +121,7 @@ func (t *ParserTest) TestValidPaddingLowIsZero(c *gc.C) {
 
 	data := frame.(*DataFrame)
 	c.Check(frame.GetFlags(), gc.Equals, PAD_LOW)
-	c.Check(data.PaddingLength, gc.Equals, uint(0))
+	c.Check(data.PaddingLength, gc.Equals, uint16(0))
 }
 
 func (t *ParserTest) TestValidPadLowAndHighAreZero(c *gc.C) {
@@ -135,7 +135,7 @@ func (t *ParserTest) TestValidPadLowAndHighAreZero(c *gc.C) {
 
 	data := frame.(*DataFrame)
 	c.Check(frame.GetFlags(), gc.Equals, PAD_LOW|PAD_HIGH)
-	c.Check(data.PaddingLength, gc.Equals, uint(0))
+	c.Check(data.PaddingLength, gc.Equals, uint16(0))
 }
 
 func (t *ParserTest) TestValidPadLowIsNonzero(c *gc.C) {
@@ -149,7 +149,7 @@ func (t *ParserTest) TestValidPadLowIsNonzero(c *gc.C) {
 
 	data := frame.(*DataFrame)
 	c.Check(frame.GetFlags(), gc.Equals, PAD_LOW)
-	c.Check(data.PaddingLength, gc.Equals, uint(3))
+	c.Check(data.PaddingLength, gc.Equals, uint16(3))
 	// Remaining frame payload was discarded.
 	c.Check(data.Data, gc.DeepEquals, []byte{})
 }
@@ -165,7 +165,7 @@ func (t *ParserTest) TestValidPadLowIsNonzeroAndPadHighIsZero(c *gc.C) {
 
 	data := frame.(*DataFrame)
 	c.Check(frame.GetFlags(), gc.Equals, PAD_LOW|PAD_HIGH)
-	c.Check(data.PaddingLength, gc.Equals, uint(2))
+	c.Check(data.PaddingLength, gc.Equals, uint16(2))
 	// Remaining frame payload was discarded.
 	c.Check(data.Data, gc.DeepEquals, []byte{})
 }
@@ -184,7 +184,7 @@ func (t *ParserTest) TestValidPadLowAndPadHighAreNonzero(c *gc.C) {
 
 	data := frame.(*DataFrame)
 	c.Check(frame.GetFlags(), gc.Equals, PAD_LOW|PAD_HIGH)
-	c.Check(data.PaddingLength, gc.Equals, uint(259))
+	c.Check(data.PaddingLength, gc.Equals, uint16(259))
 	// Remaining frame payload was discarded.
 	c.Check(data.Data, gc.DeepEquals, []byte{})
 }
@@ -383,7 +383,7 @@ func (t *ParserTest) TestValidDataFrame(c *gc.C) {
 
 	c.Check(data.Flags, gc.Equals, PAD_LOW|END_SEGMENT)
 	c.Check(data.StreamID, gc.Equals, StreamID(0x01020304))
-	c.Check(data.PaddingLength, gc.Equals, uint(4))
+	c.Check(data.PaddingLength, gc.Equals, uint16(4))
 	c.Check(data.Data, gc.DeepEquals, []byte{0xd1, 0xd2, 0xd3, 0xd4, 0xd5})
 }
 
@@ -402,7 +402,7 @@ func (t *ParserTest) TestValidHeadersFrame(c *gc.C) {
 
 	c.Check(headers.Flags, gc.Equals, PAD_LOW|PRIORITY_GROUP|END_HEADERS)
 	c.Check(headers.StreamID, gc.Equals, StreamID(0x01020304))
-	c.Check(headers.PaddingLength, gc.Equals, uint(5))
+	c.Check(headers.PaddingLength, gc.Equals, uint16(5))
 	c.Check(headers.PriorityGroup, gc.Equals, uint32(0x10203040))
 	c.Check(headers.PriorityWeight, gc.Equals, uint8(0x50))
 	c.Check(headers.Fields, gc.DeepEquals, []HeaderField{
@@ -447,7 +447,8 @@ func (t *ParserTest) TestValidRstStreamFrame(c *gc.C) {
 
 	c.Check(rstStream.Flags, gc.Equals, NO_FLAGS)
 	c.Check(rstStream.StreamID, gc.Equals, StreamID(0x01020304))
-	c.Check(rstStream.Code, gc.Equals, ENHANCE_YOUR_CALM)
+	c.Check(rstStream.Error.Level, gc.Equals, StreamError)
+	c.Check(rstStream.Error.Code, gc.Equals, ENHANCE_YOUR_CALM)
 }
 
 func (t *ParserTest) TestInvalidRstStreamWithStreamIDZero(c *gc.C) {
@@ -682,11 +683,11 @@ func (t *ParserTest) TestInvalidPingFrameUnderflow(c *gc.C) {
 
 func (t *ParserTest) TestValidGoAwayFrame(c *gc.C) {
 	t.input.Write([]byte{
-		0x00, 0x0b, byte(GOAWAY), byte(NO_FLAGS),
+		0x00, 0x0c, byte(GOAWAY), byte(NO_FLAGS),
 		0x00, 0x00, 0x00, 0x00,
 		0x10, 0x20, 0x30, 0x40,
 		0x00, 0x00, 0x00, 0x11,
-		0xd1, 0xd2, 0xd3,
+		0x66, 0x61, 0x69, 0x6c,
 	})
 	frame, err := t.parser.ParseFrame()
 	c.Check(err, gc.IsNil)
@@ -695,8 +696,9 @@ func (t *ParserTest) TestValidGoAwayFrame(c *gc.C) {
 	c.Check(goAway.Flags, gc.Equals, NO_FLAGS)
 	c.Check(goAway.StreamID, gc.Equals, StreamID(0x0))
 	c.Check(goAway.LastID, gc.Equals, StreamID(0x10203040))
-	c.Check(goAway.Code, gc.Equals, ENHANCE_YOUR_CALM)
-	c.Check(goAway.Debug, gc.DeepEquals, []byte{0xd1, 0xd2, 0xd3})
+	c.Check(goAway.Error.Level, gc.Equals, ConnectionError)
+	c.Check(goAway.Error.Code, gc.Equals, ENHANCE_YOUR_CALM)
+	c.Check(goAway.Error.Err.Error(), gc.Equals, "fail")
 }
 
 func (t *ParserTest) TestInvalidGoAwayStreamID(c *gc.C) {

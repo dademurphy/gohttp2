@@ -5,6 +5,7 @@ package http2
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"io/ioutil"
 )
@@ -15,6 +16,11 @@ const (
 	kStreamIDReservedMask      StreamID = 0x80000000
 	kWindowSizeReservedMask    uint32   = 0x80000000
 )
+
+type HeaderDecoder interface {
+	DecodeHeaderBlockFragment(in *io.LimitedReader) ([]HeaderField, *Error)
+	HeaderBlockComplete() ([]HeaderField, *Error)
+}
 
 type FrameParser struct {
 	decoder HeaderDecoder
@@ -140,7 +146,7 @@ func (p *FrameParser) parseFramePadding() (FramePadding, *Error) {
 		}
 	}
 	// Expect that the combined value doesn't overflow remaining input.
-	length := uint(high)<<8 + uint(low)
+	length := uint16(high)<<8 + uint16(low)
 	if int64(length) > p.in.N {
 		return FramePadding{}, frameSizeError(
 			"padding of %v is longer than remaining frame length %v",
@@ -160,7 +166,7 @@ func (p *FrameParser) read(out interface{}) *Error {
 	return nil
 }
 
-func (p *FrameParser) readData(padLength uint) ([]byte, *Error) {
+func (p *FrameParser) readData(padLength uint16) ([]byte, *Error) {
 	// Read and buffer frame data.
 	out := make([]byte, p.in.N-int64(padLength))
 	if _, err := io.ReadFull(p.in, out); err != nil {
@@ -173,7 +179,7 @@ func (p *FrameParser) readData(padLength uint) ([]byte, *Error) {
 	return out, nil
 }
 
-func (p *FrameParser) readFragment(padLength uint) ([]HeaderField, *Error) {
+func (p *FrameParser) readFragment(padLength uint16) ([]HeaderField, *Error) {
 	var fields []HeaderField
 	var err *Error
 
@@ -282,12 +288,15 @@ func (p *FrameParser) parsePriorityFrame() (*PriorityFrame, *Error) {
 }
 
 func (p *FrameParser) parseRstStreamFrame() (*RstStreamFrame, *Error) {
-	frame := &RstStreamFrame{FramePrefix: p.prefix}
+	frame := &RstStreamFrame{
+		FramePrefix: p.prefix,
+		Error:       Error{Level: StreamError},
+	}
 
 	if frame.StreamID == 0 {
 		return nil, protocolError("RST_STREAM must have non-zero StreamID")
 	}
-	if err := p.read(&frame.Code); err != nil {
+	if err := p.read(&frame.Error.Code); err != nil {
 		return nil, err
 	}
 	return frame, nil
@@ -361,8 +370,10 @@ func (p *FrameParser) parsePingFrame() (*PingFrame, *Error) {
 }
 
 func (p *FrameParser) parseGoAwayFrame() (*GoAwayFrame, *Error) {
-	var err *Error
-	frame := &GoAwayFrame{FramePrefix: p.prefix}
+	frame := &GoAwayFrame{
+		FramePrefix: p.prefix,
+		Error:       Error{Level: ConnectionError},
+	}
 
 	if frame.StreamID != 0 {
 		return nil, protocolError("invalid GOAWAY StreamID %#x", frame.StreamID)
@@ -373,11 +384,13 @@ func (p *FrameParser) parseGoAwayFrame() (*GoAwayFrame, *Error) {
 	if frame.LastID&kStreamIDReservedMask != 0 {
 		return nil, protocolError("last StreamID has reserved bit set")
 	}
-	if err := p.read(&frame.Code); err != nil {
+	if err := p.read(&frame.Error.Code); err != nil {
 		return nil, err
 	}
-	if frame.Debug, err = p.readData(0); err != nil {
+	if debug, err := p.readData(0); err != nil {
 		return nil, err
+	} else {
+		frame.Error.Err = errors.New(string(debug))
 	}
 	return frame, nil
 }

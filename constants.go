@@ -81,11 +81,24 @@ const (
 	INADEQUATE_SECURITY ErrorCode = 0x12
 )
 
+type ErrorLevel uint8
+
+const (
+	// Default. Error must be handled by breaking the connection.
+	ConnectionError ErrorLevel = 0
+	// Connection may continue, but stream must be reset.
+	StreamError ErrorLevel = iota
+	// No explicit error handling required. Eg, DATA
+	// received shortly after sending a RST_STREAM.
+	RecoverableError ErrorLevel = iota
+)
+
 // Wrapper around error, satisfying the error interface
 // but additionally capturing an ErrorCode.
 type Error struct {
-	Code ErrorCode
-	Err  error
+	Code  ErrorCode
+	Level ErrorLevel
+	Err   error
 }
 
 func NewError(code ErrorCode, errArgs ...interface{}) *Error {
@@ -103,8 +116,9 @@ func NewError(code ErrorCode, errArgs ...interface{}) *Error {
 		err = fmt.Errorf("%#v", errArgs)
 	}
 	return &Error{
-		Code: code,
-		Err:  err,
+		Code:  code,
+		Level: ConnectionError,
+		Err:   err,
 	}
 }
 

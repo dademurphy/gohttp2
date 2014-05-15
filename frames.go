@@ -34,7 +34,7 @@ func (f *FramePrefix) GetStreamID() StreamID {
 // Models frames carrying padding (DATA, HEADERS, PUSH_PROMISE,
 // and CONTINUATION).
 type FramePadding struct {
-	PaddingLength uint
+	PaddingLength uint16
 }
 
 // Models frames carrying a priority update (HEADERS, PRIORITY)
@@ -69,7 +69,7 @@ type PriorityFrame struct {
 type RstStreamFrame struct {
 	FramePrefix
 
-	Code ErrorCode
+	Error Error
 }
 
 type SettingsFrame struct {
@@ -96,8 +96,7 @@ type GoAwayFrame struct {
 	FramePrefix
 
 	LastID StreamID
-	Code   ErrorCode
-	Debug  []byte
+	Error  Error
 }
 
 type WindowUpdateFrame struct {
@@ -176,4 +175,13 @@ func (f *WindowUpdateFrame) GetType() FrameType {
 }
 func (f *ContinuationFrame) GetType() FrameType {
 	return CONTINUATION
+}
+
+func (f *DataFrame) PayloadLength() int {
+	return len(f.Data) + int(f.PaddingLength)
+}
+func (f *DataFrame) SplitAt(bound int) *DataFrame {
+	// TODO(johng)
+	panic(bound)
+	return nil
 }
