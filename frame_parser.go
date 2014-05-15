@@ -103,7 +103,7 @@ func (p *FrameParser) parsePrefix() *Error {
 	if err := p.read(&p.frameType); err != nil {
 		return err
 	} else if p.frameType > LAST_FRAME_TYPE {
-		return protocolError("invalid frame type %#x", p.frameType)
+		return protocolError("invalid frame type %#x", uint8(p.frameType))
 	} else if p.expectContinuation && p.frameType != CONTINUATION {
 		return protocolError("expected CONTINUATION")
 	} else if !p.expectContinuation && p.frameType == CONTINUATION {

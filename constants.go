@@ -5,6 +5,7 @@ package http2
 
 import (
 	"fmt"
+	"strings"
 )
 
 type StreamID uint32
@@ -25,8 +26,35 @@ const (
 	LAST_FRAME_TYPE FrameType = CONTINUATION
 )
 
+func (t FrameType) String() string {
+	switch t {
+	case DATA:
+		return "DATA"
+	case HEADERS:
+		return "HEADERS"
+	case PRIORITY:
+		return "PRIORITY"
+	case RST_STREAM:
+		return "RST_STREAM"
+	case SETTINGS:
+		return "SETTINGS"
+	case PUSH_PROMISE:
+		return "PUSH_PROMISE"
+	case PING:
+		return "PING"
+	case GOAWAY:
+		return "GOAWAY"
+	case WINDOW_UPDATE:
+		return "WINDOW_UPDATE"
+	case CONTINUATION:
+		return "CONTINUATION"
+	}
+	return "(unknown frame type)"
+}
+
 type Flags uint8
 
+// TODO(johng): Update flags for draft '12.
 const (
 	NO_FLAGS            Flags = 0x00
 	ACK                 Flags = 0x01
@@ -38,6 +66,35 @@ const (
 	PRIORITY_GROUP      Flags = 0x20
 	PRIORITY_DEPENDENCY Flags = 0x40
 )
+
+func (t Flags) String() string {
+	var parts []string
+	if t == NO_FLAGS {
+		parts = []string{"NO_FLAGS"}
+	}
+	if t&END_STREAM != 0 {
+		parts = append(parts, "END_STREAM/ACK")
+	}
+	if t&END_SEGMENT != 0 {
+		parts = append(parts, "END_SEGMENT")
+	}
+	if t&END_HEADERS != 0 {
+		parts = append(parts, "END_HEADERS")
+	}
+	if t&PAD_LOW != 0 {
+		parts = append(parts, "PAD_LOW")
+	}
+	if t&PAD_HIGH != 0 {
+		parts = append(parts, "PAD_HIGH")
+	}
+	if t&PRIORITY_GROUP != 0 {
+		parts = append(parts, "PRIORITY_GROUP")
+	}
+	if t&PRIORITY_DEPENDENCY != 0 {
+		parts = append(parts, "PRIORITY_DEPENDENCY")
+	}
+	return strings.Join(parts, "|")
+}
 
 var kValidFlags = [...]Flags{
 	// DATA
@@ -81,6 +138,38 @@ const (
 	INADEQUATE_SECURITY ErrorCode = 0x12
 )
 
+func (c ErrorCode) String() string {
+	switch c {
+	case NO_ERROR:
+		return "NO_ERROR"
+	case PROTOCOL_ERROR:
+		return "PROTOCOL_ERROR"
+	case INTERNAL_ERROR:
+		return "INTERNAL_ERROR"
+	case FLOW_CONTROL_ERROR:
+		return "FLOW_CONTROL_ERROR"
+	case SETTINGS_TIMEOUT:
+		return "SETTINGS_TIMEOUT"
+	case STREAM_CLOSED:
+		return "STREAM_CLOSED"
+	case FRAME_SIZE_ERROR:
+		return "FRAME_SIZE_ERROR"
+	case REFUSED_STREAM:
+		return "REFUSED_STREAM"
+	case CANCEL:
+		return "CANCEL"
+	case COMPRESSION_ERROR:
+		return "COMPRESSION_ERROR"
+	case CONNECT_ERROR:
+		return "CONNECT_ERROR"
+	case ENHANCE_YOUR_CALM:
+		return "ENHANCE_YOUR_CALM"
+	case INADEQUATE_SECURITY:
+		return "INADEQUATE_SECURITY"
+	}
+	return "(unknown error code)"
+}
+
 type ErrorLevel uint8
 
 const (
@@ -92,6 +181,18 @@ const (
 	// received shortly after sending a RST_STREAM.
 	RecoverableError ErrorLevel = iota
 )
+
+func (l ErrorLevel) String() string {
+	switch l {
+	case ConnectionError:
+		return "ConnectionError"
+	case StreamError:
+		return "StreamError"
+	case RecoverableError:
+		return "RecoverableError"
+	}
+	return "(unknown error level)"
+}
 
 // Wrapper around error, satisfying the error interface
 // but additionally capturing an ErrorCode.

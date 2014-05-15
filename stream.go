@@ -33,42 +33,44 @@ type Stream struct {
 	SendFlowPump      chan<- int
 }
 
-func (s *Stream) frameError(dir SendOrReceive, frameName string) *Error {
+func (s *Stream) frameError(dir SendOrReceive, frameType FrameType) *Error {
 	// Note that errors are Level CONNECTION by default.
 	var err *Error
 
 	if dir == Send {
-		err = internalError("Attempt to send %v on %v stream %v",
-			frameName, s.State, s.ID)
+		err = internalError("attempt to send %v on %v stream %v",
+			frameType, s.State, s.ID)
 	} else {
-		err = protocolError("Recieved %v on %v stream %v",
-			frameName, s.State, s.ID)
+		err = protocolError("recieved %v on %v stream %v",
+			frameType, s.State, s.ID)
 	}
 
-	// Special error cases.
-	if dir == Send && s.SawRemoteRst {
-		// Local send raced with remote reset.
-		err.Code = STREAM_CLOSED
-		err.Level = RecoverableError
-	} else if dir == Receive && !s.SawRemoteRst && !s.SawRemoteFin {
-		// Remote send raced with local reset.
-		err.Code = STREAM_CLOSED
-		err.Level = RecoverableError
-	} else if dir == Receive && s.SawRemoteRst {
-		// Remote reset followed by remote send. Mandated as a stream error.
-		err.Code = STREAM_CLOSED
-		err.Level = StreamError
-	} else if s.State == Closed && !s.SawRemoteFin {
-		// Remote fin followed by remote send. Also mandated as a stream error.
-		err.Code = STREAM_CLOSED
-		err.Level = StreamError
+	// Special error cases around stream close.
+	if s.State == Closed {
+		if dir == Send {
+			if s.SawRemoteRst {
+				// Local send raced with remote reset.
+				err.Code = STREAM_CLOSED
+				err.Level = RecoverableError
+			}
+		} else {
+			if !s.SawRemoteRst && !s.SawRemoteFin {
+				// Remote send raced with local reset.
+				err.Code = STREAM_CLOSED
+				err.Level = RecoverableError
+			} else if s.SawRemoteRst || s.SawRemoteFin {
+				// Remote close followed by remote send. Mandated as a stream error.
+				err.Code = STREAM_CLOSED
+				err.Level = StreamError
+			}
+		}
 	}
 	return err
 }
 
 func (s *Stream) onPushPromise(dir SendOrReceive) *Error {
 	if s.State != Idle {
-		return s.frameError(dir, "PUSH_PROMISE")
+		return s.frameError(dir, PUSH_PROMISE)
 	}
 
 	if dir == Send {
@@ -88,7 +90,7 @@ func (s *Stream) onHeaders(dir SendOrReceive, fin bool) *Error {
 		!(s.State == ReservedRemote && dir == Receive) &&
 		!(s.State == HalfClosedLocal && dir == Receive) &&
 		!(s.State == HalfClosedRemote && dir == Send) {
-		return s.frameError(dir, "HEADERS")
+		return s.frameError(dir, HEADERS)
 	}
 
 	localOpen := false
@@ -121,14 +123,14 @@ func (s *Stream) onData(dir SendOrReceive) *Error {
 	if s.State != Open &&
 		!(s.State == HalfClosedLocal && dir == Receive) &&
 		!(s.State == HalfClosedRemote && dir == Send) {
-		return s.frameError(dir, "DATA")
+		return s.frameError(dir, DATA)
 	}
 	return nil
 }
 
 func (s *Stream) onReset(dir SendOrReceive) *Error {
 	if s.State == Idle {
-		return s.frameError(dir, "RST_STREAM")
+		return s.frameError(dir, RST_STREAM)
 	}
 
 	if s.State != HalfClosedLocal && s.State != Closed {
