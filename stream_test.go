@@ -18,148 +18,201 @@ type errCase struct {
 }
 
 type successCase struct {
-	state        StreamState
-	sawRemoteFin bool
-	sawRemoteRst bool
-	pumpOpened   bool
-	pumpClosed   bool
+	state      StreamState
+	pumpOpened bool
+	pumpClosed bool
 }
 
-func (t *StreamTest) from(state StreamState) *Stream {
-	t.pump = make(chan int, 1)
-	t.stream = &Stream{
-		State:             state,
-		SendFlowAvailable: 4096,
-		SendFlowPump:      t.pump,
-	}
-	return t.stream
+type transitionCases struct {
+	onRecvData           interface{}
+	onRecvDataWithFin    interface{}
+	onRecvHeaders        interface{}
+	onRecvHeadersWithFin interface{}
+	onRecvPushPromise    interface{}
+	onRecvReset          interface{}
+	onSendData           interface{}
+	onSendDataWithFin    interface{}
+	onSendHeaders        interface{}
+	onSendHeadersWithFin interface{}
+	onSendPushPromise    interface{}
+	onSendReset          interface{}
 }
 
-func (t *StreamTest) verify(outcome interface{}, err *Error, c *gc.C) {
-	if expected, ok := outcome.(*errCase); ok {
-		c.Check(err, gc.NotNil)
-		c.Check(err.Level, gc.Equals, expected.level)
-		c.Check(err.Code, gc.Equals, expected.code)
-		return
+func defaultTransitionOutcomes() transitionCases {
+	return transitionCases{
+		onRecvData:           &errCase{ConnectionError, PROTOCOL_ERROR},
+		onRecvDataWithFin:    &errCase{ConnectionError, PROTOCOL_ERROR},
+		onRecvHeaders:        &errCase{ConnectionError, PROTOCOL_ERROR},
+		onRecvHeadersWithFin: &errCase{ConnectionError, PROTOCOL_ERROR},
+		onRecvPushPromise:    &errCase{ConnectionError, PROTOCOL_ERROR},
+		onRecvReset:          &successCase{Closed, false, true},
+		onSendData:           &errCase{ConnectionError, INTERNAL_ERROR},
+		onSendDataWithFin:    &errCase{ConnectionError, INTERNAL_ERROR},
+		onSendHeaders:        &errCase{ConnectionError, INTERNAL_ERROR},
+		onSendHeadersWithFin: &errCase{ConnectionError, INTERNAL_ERROR},
+		onSendPushPromise:    &errCase{ConnectionError, INTERNAL_ERROR},
+		onSendReset:          &successCase{ClosedWithSentReset, false, true},
 	}
-	expected := outcome.(*successCase)
-	c.Check(t.stream.State, gc.Equals, expected.state)
-	c.Check(t.stream.SawRemoteRst, gc.Equals, expected.sawRemoteRst)
-	c.Check(t.stream.SawRemoteFin, gc.Equals, expected.sawRemoteFin)
+}
 
-	select {
-	case r, ok := <-t.pump:
-		if expected.pumpOpened {
-			c.Check(ok, gc.Equals, true)
-			c.Check(r, gc.Equals, t.stream.SendFlowAvailable)
-		} else if expected.pumpClosed {
-			c.Check(ok, gc.Equals, false)
-		} else {
-			c.Error("unexpected pump update: ", r, ok)
+func verifyTransitions(model Stream, outcomes transitionCases, c *gc.C) {
+	var pump chan int
+	var underTest *Stream
+
+	from := func() *Stream {
+		pump = make(chan int, 1)
+		underTest = &Stream{
+			ID:                model.ID,
+			State:             model.State,
+			SendFlowAvailable: 4096,
+			SendFlowPump:      pump,
 		}
-	default:
-		c.Check(expected.pumpOpened, gc.Equals, false)
-		c.Check(expected.pumpClosed, gc.Equals, false)
+		return underTest
 	}
+
+	verify := func(outcome interface{}, err *Error) {
+		if expected, ok := outcome.(*errCase); ok {
+			c.Check(err, gc.NotNil)
+			c.Check(err.Level, gc.Equals, expected.level)
+			c.Check(err.Code, gc.Equals, expected.code)
+			return
+		}
+		expected := outcome.(*successCase)
+		c.Check(underTest.State, gc.Equals, expected.state)
+
+		select {
+		case r, ok := <-pump:
+			if expected.pumpOpened {
+				c.Check(ok, gc.Equals, true)
+				c.Check(r, gc.Equals, underTest.SendFlowAvailable)
+			} else if expected.pumpClosed {
+				c.Check(ok, gc.Equals, false)
+			} else {
+				c.Error("unexpected pump update: ", r, ok)
+			}
+		default:
+			c.Check(expected.pumpOpened, gc.Equals, false)
+			c.Check(expected.pumpClosed, gc.Equals, false)
+		}
+		if c.Failed() {
+			panic(false) // Generate a callstack.
+		}
+	}
+
+	verify(outcomes.onRecvData, from().onData(Receive, false))
+	verify(outcomes.onRecvDataWithFin, from().onData(Receive, true))
+	verify(outcomes.onRecvHeaders, from().onHeaders(Receive, false))
+	verify(outcomes.onRecvHeadersWithFin, from().onHeaders(Receive, true))
+	verify(outcomes.onRecvPushPromise, from().onPushPromise(Receive))
+	verify(outcomes.onRecvReset, from().onReset(Receive))
+	verify(outcomes.onSendData, from().onData(Send, false))
+	verify(outcomes.onSendDataWithFin, from().onData(Send, true))
+	verify(outcomes.onSendHeaders, from().onHeaders(Send, false))
+	verify(outcomes.onSendHeadersWithFin, from().onHeaders(Send, true))
+	verify(outcomes.onSendPushPromise, from().onPushPromise(Send))
+	verify(outcomes.onSendReset, from().onReset(Send))
 }
 
-func (t *StreamTest) TestPushPromiseTransitions(c *gc.C) {
-	testCases := []struct {
-		initial StreamState
-		dir     SendOrReceive
-		outcome interface{}
-	}{
-		{Idle, Send,
-			&successCase{ReservedLocal, true, false, false, false}},
-		{Idle, Receive,
-			&successCase{ReservedRemote, false, false, false, true}},
-		{ReservedLocal, Send,
-			&errCase{ConnectionError, INTERNAL_ERROR}},
-		{ReservedLocal, Receive,
-			&errCase{ConnectionError, PROTOCOL_ERROR}},
-		{ReservedRemote, Send,
-			&errCase{ConnectionError, INTERNAL_ERROR}},
-		{ReservedRemote, Receive,
-			&errCase{ConnectionError, PROTOCOL_ERROR}},
-		{Open, Send,
-			&errCase{ConnectionError, INTERNAL_ERROR}},
-		{Open, Receive,
-			&errCase{ConnectionError, PROTOCOL_ERROR}},
-		{HalfClosedLocal, Send,
-			&errCase{ConnectionError, INTERNAL_ERROR}},
-		{HalfClosedLocal, Receive,
-			&errCase{ConnectionError, PROTOCOL_ERROR}},
-		{HalfClosedRemote, Send,
-			&errCase{ConnectionError, INTERNAL_ERROR}},
-		{HalfClosedRemote, Receive,
-			&errCase{ConnectionError, PROTOCOL_ERROR}},
-		{Closed, Send,
-			&errCase{ConnectionError, INTERNAL_ERROR}},
-		{Closed, Receive,
-			&errCase{RecoverableError, STREAM_CLOSED}},
-	}
-	for _, testCase := range testCases {
-		t.verify(testCase.outcome,
-			t.from(testCase.initial).onPushPromise(testCase.dir), c)
-	}
+func (t *StreamTest) TestTransitionsFromIdle(c *gc.C) {
+	cases := defaultTransitionOutcomes()
+
+	cases.onRecvHeaders = &successCase{Open, true, false}
+	cases.onRecvHeadersWithFin = &successCase{HalfClosedRemote, true, false}
+	cases.onRecvPushPromise = &successCase{ReservedRemote, false, true}
+	cases.onRecvReset = &errCase{ConnectionError, PROTOCOL_ERROR}
+	cases.onSendHeaders = &successCase{Open, true, false}
+	cases.onSendHeadersWithFin = &successCase{HalfClosedLocal, false, true}
+	cases.onSendPushPromise = &successCase{ReservedLocal, false, false}
+	cases.onSendReset = &errCase{ConnectionError, INTERNAL_ERROR}
+
+	verifyTransitions(Stream{State: Idle}, cases, c)
 }
 
-func (t *StreamTest) TestHeadersTransitions(c *gc.C) {
-	testCases := []struct {
-		initial StreamState
-		dir     SendOrReceive
-		fin     bool
-		outcome interface{}
-	}{
-		{Idle, Send, false,
-			&successCase{Open, false, false, true, false}},
-		{Idle, Send, true,
-			&successCase{HalfClosedLocal, false, false, false, true}},
-		{Idle, Receive, false,
-			&successCase{Open, false, false, true, false}},
-		{Idle, Receive, true,
-			&successCase{HalfClosedRemote, true, false, true, false}},
-		{ReservedLocal, Send, false,
-			&successCase{HalfClosedRemote, false, false, true, false}},
-		{ReservedLocal, Send, true,
-			&successCase{Closed, false, false, false, true}},
-		{ReservedLocal, Receive, false,
-			&errCase{ConnectionError, PROTOCOL_ERROR}},
-		{ReservedRemote, Send, false,
-			&errCase{ConnectionError, INTERNAL_ERROR}},
-		{ReservedRemote, Receive, false,
-			&successCase{HalfClosedLocal, false, false, false, false}},
-		{ReservedRemote, Receive, true,
-			&successCase{Closed, true, false, false, false}},
-		{Open, Send, false,
-			&successCase{Open, false, false, false, false}},
-		{Open, Send, true,
-			&successCase{HalfClosedLocal, false, false, false, true}},
-		{Open, Receive, false,
-			&successCase{Open, false, false, false, false}},
-		{Open, Receive, true,
-			&successCase{HalfClosedRemote, true, false, false, false}},
-		{HalfClosedLocal, Send, false,
-			&errCase{ConnectionError, INTERNAL_ERROR}},
-		{HalfClosedLocal, Receive, false,
-			&successCase{HalfClosedLocal, false, false, false, false}},
-		{HalfClosedLocal, Receive, true,
-			&successCase{Closed, true, false, false, false}},
-		{HalfClosedRemote, Send, false,
-			&successCase{HalfClosedRemote, false, false, false, false}},
-		{HalfClosedRemote, Send, true,
-			&successCase{Closed, false, false, false, true}},
-		{HalfClosedRemote, Receive, false,
-			&errCase{ConnectionError, PROTOCOL_ERROR}},
-		{Closed, Send, false,
-			&errCase{ConnectionError, INTERNAL_ERROR}},
-		{Closed, Receive, false,
-			&errCase{RecoverableError, STREAM_CLOSED}},
-	}
-	for _, testCase := range testCases {
-		t.verify(testCase.outcome,
-			t.from(testCase.initial).onHeaders(testCase.dir, testCase.fin), c)
-	}
+func (t *StreamTest) TestTransitionsFromReservedLocal(c *gc.C) {
+	cases := defaultTransitionOutcomes()
+
+	cases.onSendHeaders = &successCase{HalfClosedRemote, true, false}
+	cases.onSendHeadersWithFin = &successCase{Closed, false, true}
+
+	verifyTransitions(Stream{State: ReservedLocal}, cases, c)
+}
+
+func (t *StreamTest) TestTransitionsFromReservedRemote(c *gc.C) {
+	cases := defaultTransitionOutcomes()
+
+	cases.onRecvHeaders = &successCase{HalfClosedLocal, false, false}
+	cases.onRecvHeadersWithFin = &successCase{Closed, false, false}
+	cases.onRecvReset = &successCase{Closed, false, false}
+	cases.onSendReset = &successCase{ClosedWithSentReset, false, false}
+
+	verifyTransitions(Stream{State: ReservedRemote}, cases, c)
+}
+
+func (t *StreamTest) TestTransitionsFromOpen(c *gc.C) {
+	cases := defaultTransitionOutcomes()
+
+	cases.onRecvData = &successCase{Open, false, false}
+	cases.onRecvDataWithFin = &successCase{HalfClosedRemote, false, false}
+	cases.onRecvHeaders = &successCase{Open, false, false}
+	cases.onRecvHeadersWithFin = &successCase{HalfClosedRemote, false, false}
+	cases.onSendData = &successCase{Open, false, false}
+	cases.onSendDataWithFin = &successCase{HalfClosedLocal, false, true}
+	cases.onSendHeaders = &successCase{Open, false, false}
+	cases.onSendHeadersWithFin = &successCase{HalfClosedLocal, false, true}
+
+	verifyTransitions(Stream{State: Open}, cases, c)
+}
+
+func (t *StreamTest) TestTransitionsFromHalfClosedRemote(c *gc.C) {
+	cases := defaultTransitionOutcomes()
+
+	cases.onSendData = &successCase{HalfClosedRemote, false, false}
+	cases.onSendDataWithFin = &successCase{Closed, false, true}
+	cases.onSendHeaders = &successCase{HalfClosedRemote, false, false}
+	cases.onSendHeadersWithFin = &successCase{Closed, false, true}
+
+	verifyTransitions(Stream{State: HalfClosedRemote}, cases, c)
+}
+
+func (t *StreamTest) TestTransitionsFromHalfClosedLocal(c *gc.C) {
+	cases := defaultTransitionOutcomes()
+
+	cases.onRecvData = &successCase{HalfClosedLocal, false, false}
+	cases.onRecvDataWithFin = &successCase{Closed, false, false}
+	cases.onRecvHeaders = &successCase{HalfClosedLocal, false, false}
+	cases.onRecvHeadersWithFin = &successCase{Closed, false, false}
+	cases.onRecvReset = &successCase{Closed, false, false}
+	cases.onSendReset = &successCase{ClosedWithSentReset, false, false}
+
+	verifyTransitions(Stream{State: HalfClosedLocal}, cases, c)
+}
+
+func (t *StreamTest) TestTransitionsFromClosed(c *gc.C) {
+	cases := defaultTransitionOutcomes()
+
+	cases.onRecvData = &errCase{StreamError, STREAM_CLOSED}
+	cases.onRecvDataWithFin = &errCase{StreamError, STREAM_CLOSED}
+	cases.onRecvHeaders = &errCase{StreamError, STREAM_CLOSED}
+	cases.onRecvHeadersWithFin = &errCase{StreamError, STREAM_CLOSED}
+	cases.onRecvPushPromise = &errCase{StreamError, STREAM_CLOSED}
+	cases.onRecvReset = &successCase{Closed, false, false}
+	cases.onSendReset = &successCase{ClosedWithSentReset, false, false}
+
+	verifyTransitions(Stream{State: Closed}, cases, c)
+}
+
+func (t *StreamTest) TestTransitionsFromClosedWithSentReset(c *gc.C) {
+	cases := defaultTransitionOutcomes()
+
+	cases.onRecvData = &errCase{RecoverableError, STREAM_CLOSED}
+	cases.onRecvDataWithFin = &errCase{RecoverableError, STREAM_CLOSED}
+	cases.onRecvHeaders = &errCase{RecoverableError, STREAM_CLOSED}
+	cases.onRecvHeadersWithFin = &errCase{RecoverableError, STREAM_CLOSED}
+	cases.onRecvPushPromise = &errCase{RecoverableError, STREAM_CLOSED}
+	cases.onRecvReset = &errCase{RecoverableError, STREAM_CLOSED}
+	cases.onSendReset = &errCase{ConnectionError, INTERNAL_ERROR}
+
+	verifyTransitions(Stream{State: ClosedWithSentReset}, cases, c)
 }
 
 var _ = gc.Suite(&StreamTest{})

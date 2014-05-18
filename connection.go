@@ -81,7 +81,7 @@ func (c *connection) recieveHeadersFrame(headers *HeadersFrame) *Error {
 
 func (c *connection) prepareToSendDataFrame(data *DataFrame) *Error {
 	stream := c.getOrCreateStream(data.StreamID)
-	if err := stream.onData(Send); err != nil {
+	if err := stream.onData(Send, data.Flags&END_STREAM != 0); err != nil {
 		return err
 	}
 
@@ -139,7 +139,7 @@ func (c *connection) recieveDataFrame(data *DataFrame) *Error {
 	}
 
 	stream := c.getOrCreateStream(data.StreamID)
-	if err := stream.onData(false); err != nil {
+	if err := stream.onData(Receive, data.Flags&END_STREAM != 0); err != nil {
 		c.recvFlow.ApplyDataConsumed(data)
 		return err
 	}

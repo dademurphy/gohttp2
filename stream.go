@@ -8,24 +8,45 @@ type StreamState uint8
 type SendOrReceive bool
 
 const (
-	Idle             StreamState = 0
-	ReservedLocal    StreamState = iota
-	ReservedRemote   StreamState = iota
-	Open             StreamState = iota
-	HalfClosedLocal  StreamState = iota
-	HalfClosedRemote StreamState = iota
-	Closed           StreamState = iota
+	Idle                StreamState = 0
+	ReservedLocal       StreamState = iota
+	ReservedRemote      StreamState = iota
+	Open                StreamState = iota
+	HalfClosedLocal     StreamState = iota
+	HalfClosedRemote    StreamState = iota
+	Closed              StreamState = iota
+	ClosedWithSentReset StreamState = iota // Substate of Closed.
 
 	Send    SendOrReceive = true
 	Receive SendOrReceive = false
 )
 
+func (s StreamState) String() string {
+	switch s {
+	case Idle:
+		return "Idle"
+	case ReservedLocal:
+		return "ReservedLocal"
+	case ReservedRemote:
+		return "ReservedRemote"
+	case Open:
+		return "Open"
+	case HalfClosedLocal:
+		return "HalfClosedLocal"
+	case HalfClosedRemote:
+		return "HalfClosedRemote"
+	case Closed:
+		return "Closed"
+	case ClosedWithSentReset:
+		return "ClosedWithSentReset"
+	default:
+		return "(unknown StreamState)"
+	}
+}
+
 type Stream struct {
 	ID    StreamID
 	State StreamState
-
-	SawRemoteRst bool
-	SawRemoteFin bool
 
 	RecvFlow RecieveFlow
 
@@ -45,25 +66,15 @@ func (s *Stream) frameError(dir SendOrReceive, frameType FrameType) *Error {
 			frameType, s.State, s.ID)
 	}
 
-	// Special error cases around stream close.
-	if s.State == Closed {
-		if dir == Send {
-			if s.SawRemoteRst {
-				// Local send raced with remote reset.
-				err.Code = STREAM_CLOSED
-				err.Level = RecoverableError
-			}
-		} else {
-			if !s.SawRemoteRst && !s.SawRemoteFin {
-				// Remote send raced with local reset.
-				err.Code = STREAM_CLOSED
-				err.Level = RecoverableError
-			} else if s.SawRemoteRst || s.SawRemoteFin {
-				// Remote close followed by remote send. Mandated as a stream error.
-				err.Code = STREAM_CLOSED
-				err.Level = StreamError
-			}
-		}
+	if dir == Receive && s.State == Closed {
+		// Remote close followed by remote send. Manadated as a stream error.
+		err.Code = STREAM_CLOSED
+		err.Level = StreamError
+	}
+	if dir == Receive && s.State == ClosedWithSentReset {
+		// Ignore further receive errors on this stream.
+		err.Code = STREAM_CLOSED
+		err.Level = RecoverableError
 	}
 	return err
 }
@@ -75,7 +86,6 @@ func (s *Stream) onPushPromise(dir SendOrReceive) *Error {
 
 	if dir == Send {
 		s.State = ReservedLocal
-		s.SawRemoteFin = true
 	} else {
 		s.State = ReservedRemote
 		close(s.SendFlowPump)
@@ -119,27 +129,38 @@ func (s *Stream) onHeaders(dir SendOrReceive, fin bool) *Error {
 	return nil
 }
 
-func (s *Stream) onData(dir SendOrReceive) *Error {
+func (s *Stream) onData(dir SendOrReceive, fin bool) *Error {
 	if s.State != Open &&
 		!(s.State == HalfClosedLocal && dir == Receive) &&
 		!(s.State == HalfClosedRemote && dir == Send) {
 		return s.frameError(dir, DATA)
 	}
+
+	if dir == Send && fin {
+		s.onLocalFin()
+	} else if fin {
+		s.onRemoteFin()
+	}
 	return nil
 }
 
 func (s *Stream) onReset(dir SendOrReceive) *Error {
-	if s.State == Idle {
+	if s.State == Idle ||
+		s.State == ClosedWithSentReset {
 		return s.frameError(dir, RST_STREAM)
 	}
 
-	if s.State != HalfClosedLocal && s.State != Closed {
+	if s.State != ReservedRemote &&
+		s.State != HalfClosedLocal &&
+		s.State != Closed &&
+		s.State != ClosedWithSentReset {
 		close(s.SendFlowPump)
 	}
 	if dir == Receive {
-		s.SawRemoteRst = true
+		s.State = Closed
+	} else {
+		s.State = ClosedWithSentReset
 	}
-	s.State = Closed
 	return nil
 }
 
@@ -151,7 +172,6 @@ func (s *Stream) onRemoteFin() {
 	} else {
 		panic(s.State)
 	}
-	s.SawRemoteFin = true
 }
 
 func (s *Stream) onLocalFin() {
